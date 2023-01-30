@@ -6,7 +6,98 @@ from importlib.metadata import metadata
 import os
 import re
 from calibre.customize import FileTypePlugin
+from calibre_plugins.ao3_tagger.PyPDF2 import PdfReader
+from datetime import datetime
+# from PyPDF2 import PdfReader
 
+def big_title_index(list_of_text, title):
+    for index, text in enumerate(list_of_text):
+        if text == title:
+            return index
+
+def check_if_series(list_of_text):
+    in_a_series = False
+    for text in list_of_text:
+        if text == "Series:":
+            in_a_series = True
+    return in_a_series
+
+def get_pub_date(list_of_text):
+    stats_list = []
+    for index, text in enumerate(list_of_text):
+        if text == "Stats:":
+            stats_list = list_of_text[index:]
+    if len(stats_list) == 0:
+        return datetime(101,1,1)
+    published_index = ""
+    for index, text in enumerate(stats_list):
+        if "Published:" in text:
+            published_index = index
+    if published_index == "":
+        return datetime(101,1,1)
+    published_date_string = stats_list[published_index][11:21]
+    published_date = datetime.strptime(published_date_string, "%Y-%m-%d")
+    return published_date
+
+def get_series_data(list_of_text):
+    for index, text in enumerate(list_of_text):
+        if text == "Series:":
+            series_name = list_of_text[index + 2]
+            series_index = []
+            for word in list_of_text[index + 1].split():
+                if word.isdigit():
+                    series_index.append(int(word))
+    return [series_name, series_index[0]]
+
+def get_tags(list_of_text):
+    tags = []
+    for text in list_of_text:
+        if ":" in text:
+            continue
+        tags.append(text)
+    return tags
+
+def is_archive_pdf(text_block):
+    """
+    This function is checking if the PDF is from AO3.
+    It searches for 'Archive of Our Own' on the first page, and if it finds it,
+    returns True.
+    """
+
+    print("Checking if PDF is from 'Archive of Our Own'...")
+
+    is_archive = False
+    text_split = text_block.split("\n")
+
+    for text in text_split:
+        if re.match("Archive of Our Own", text):
+            is_archive = True
+            break
+
+    if is_archive:
+        print("Is an 'Archive of Our Own' PDF")
+    else:
+        print("Not an 'Archive of Our Own' PDF. Exiting plugin...")
+
+    return is_archive
+
+def read_page_one(pdf_file):
+    """
+    This functikon takes a PDF and reads the first page.
+    The vast majority of AO3 PDFs have the relevant tags and summary info on the
+    first page, so we're only extracting that much
+    """
+
+    print("Extracting PDF page one text...")
+    reader = PdfReader(pdf_file)
+    page_one = reader.pages[0]
+    text = page_one.extract_text()
+    return text
+
+def series_index(list_of_text):
+    for index, text in enumerate(list_of_text):
+        if text == "Series:":
+            return index
 
 
 
@@ -16,177 +107,66 @@ class AO3PdfTagger(FileTypePlugin):
     description         = 'Set metadata for AO3 PDFs imported into Calibre'
     supported_platforms = ['windows'] # Platforms this plugin will run on
     author              = 'John Grimes' # The author of this plugin
-    version             = (1, 0, 0)   # The version number of this plugin
+    version             = (0, 7, 0)   # The version number of this plugin
     file_types              = set(['pdf'])
     on_import               = True
     on_postimport            = True
     minimum_calibre_version = (6, 0, 0)
 
-    from calibre_plugins.ao3_tagger.PyPDF2 import PdfReader
 
-    def read_page_one(pdf_file):
-        """
-        This functikon takes a PDF and reads the first page.
-        The vast majority of AO3 PDFs have the relevant tags and summary info on the
-        first page, so we're only extracting that much
-        """
-
-        print("Extracting PDF page one text...")
-        reader = PdfReader(pdf_file)
-        page_one = reader.pages[0]
-        text = page_one.extract_text()
-        return text
-
-    def is_archive_pdf(file_path):
-        """
-        This function is checking if the PDF is from AO3.
-        It searches for 'Archive of Our Own' on the first page, and if it finds it,
-        returns True.
-        """
-
-        print("Checking if PDF is from 'Archive of Our Own'...")
-
-        is_archive = False
-        text = read_page_one(file_path)
-
-        if re.match("Archive of Our Own", text):
-            is_archive = True
-
-        if is_archive:
-            print("Is an 'Archive of Our Own' PDF")
-        else:
-            print("Not an 'Archive of Our Own' PDF. Exiting plugin...")
-
-        return is_archive
-
-    def construct_metadata_dictionary(file_path):
-        """
-        This function constructs the metadata dictionary for an AO3 PDF.
-
-        """
-        print("Constructing metadata dictionary...")
-
-        text = read_page_one(file_path)
-        fic_metadata = {}
-
-        # After splitting, some of the text is just a period or just a comma.
-        # This checks for that
-        char_only_regex = "[.,]"
-
-        # This regex checks if the text is a tag category. They always have a ':'
-        tag_cat_regex = ".*:"
-
-        text_split = text.split("\n")
-        text_list_length = len(text_split)
-
-        for index, text in enumerate(text_split):
-            print("Looping through text...")
-            print("Finding appropriate tags...")
-            if index == 0:
-                # In an AO3 PDF, the index 0 is always the title
-                fic_metadata["title"] = text
-                print("Acquired Title")
-                previous_text = ''
-            if index > 0:
-                previous_text = text_split[index - 1]
-            if index < (text_list_length - 1):
-                next_text = text_split[index + 1]
-            if index == text_list_length:
-                next_text = ''
-            if index == 4:
-                # In an AO3 PDF, index 4 is the fic URL
-                fic_metadata["url"] = text
-                print("Acquired AO3 fic URL")
-            if index > 5:
-                if re.match("Summary", text):
-                    summary_list = text_split[index + 1: len(text_split)]
-                    summary_text = ' '.join(summary_list)
-                    summary_text = summary_text.replace("\n", ' ')
-                    summary_text = summary_text.replace("Notes", '')
-                    summary_text = summary_text.replace('  ', ' ')
-                    fic_metadata["summary"] = summary_text
-                    print("Acquired Summary")
-                    continue
-                if re.match('by ', text):
-                    fic_metadata["author"] = next_text
-                    print("Acquired Author")
-                if re.match(fic_metadata["title"], text):
-                    continue
-                if re.match(char_only_regex, text):
-                    continue
-                if re.match(tag_cat_regex, text):
-                    if re.match('Chapters', text):
-                        print("Acquired number of chapters")
-                        chap_text = text.split('/')
-                        if re.match("\?", chap_text[1]):
-                            fic_metadata["chapters"] = chap_text[1]
-                        else:
-                            fic_metadata["chapters"] = int(chap_text[1])
-                        continue
-                    if re.match('Completed', text):
-                        print("Acquired completed date")
-                        fic_metadata["completed"] = text[11:len(text)]
-                        continue
-                    if re.match('Publish', text):
-                        print("Acquired published date")
-                        fic_metadata["published"] = text[11:len(text)]
-                        continue
-                    if re.match('Language', text):
-                        print("Acquired language")
-                        fic_metadata["language"] = next_text
-                        continue
-                    if re.match('Words', text):
-                        print("Acquired word count")
-                        fic_metadata['wordCount'] = text[7:len(text)]
-                        if fic_metadata['wordCount'] == '':
-                            fic_metadata['wordCount'] = next_text
-                        continue
-                    if re.match('Series', text):
-                        print("Fic is in a series")
-                        print("Acquired series name")
-                        fic_metadata["series"]["seriesName"] = text_split[index + 2]
-                        print("Acquired position in the series")
-                        fic_metadata["series"]["part"] = int(next_text[5])
-                    fic_metadata["tagCategories"].append(text[:-1])
-                    continue
-                if not re.match(char_only_regex, previous_text) and not re.match(tag_cat_regex, previous_text):
-                    continue
-                if re.match(char_only_regex, next_text) or re.match(tag_cat_regex, next_text) or next_text == '':
-                    fic_metadata["tags"].append(text)
-                if not re.match(char_only_regex, next_text) and not re.match(tag_cat_regex, next_text):
-                    if re.match('Part', text):
-                        fic_metadata["tags"].append(next_text)
-                        continue
-                    if re.match(fic_metadata["title"], next_text):
-                        continue
-                    tag = text + ' ' + next_text
-                    fic_metadata["tags"].append(tag)
-
-        return fic_metadata
+    
     
     def run(self, path_to_ebook):
         from calibre.ebooks.metadata.meta import get_metadata, set_metadata
+        print("Reading work...")
+        page_one = read_page_one(path_to_ebook )
 
-        if is_archive_pdf(path_to_ebook) == False:
+        if is_archive_pdf(page_one) == False:
             return
+
+        print("Splitting text...")
+        text_split = page_one.split("\n")
+
+        title = text_split[0]
+        print(f"Title is {title}")
+
+        text_split = text_split[6:]
+        title_position = big_title_index(text_split, title)
+        author_position = title_position + 2
+        author = text_split[author_position]
+        print(f"Author is {author}")
+
+        text_split = text_split[:title_position]
+        pub_date = get_pub_date(text_split)
+        print(f"Publication date is {pub_date}")
+
+        is_series = check_if_series(text_split)
+        if is_series == True:
+            series_data = get_series_data(text_split)
+            print(f"{title} is work {series_data[1]} in the series '{series_data[0]}")
         
-        metadata_dictionary = construct_metadata_dictionary(path_to_ebook)
-        
+        series_position = series_index(text_split)
+        text_split = text_split[:series_position]
+
+        comma_removed_text = [i for i in text_split if i != ', ' and i != ',']
+
+        tags = get_tags(comma_removed_text)
+        print(f"The tags in this story are: {tags}")
+
+
         with open(path_to_ebook, 'r+b') as file:
             ext  = os.path.splitext(path_to_ebook)[-1][1:].lower()
             mi = get_metadata(file, ext)
-            mi.tags = metadata_dictionary["tags"]
-            mi.title = metadata_dictionary["title"]
-            mi.authors = metadata_dictionary["author"]
+            mi.tags = tags
+            mi.title = title
             mi.publisher = "AO3"
-            mi.pubdate = metadata_dictionary["published"]
-            if metadata_dictionary["language"]:
-                mi.language = metadata_dictionary["language"]
-            if metadata_dictionary["summary"]:
-                mi.comments = metadata_dictionary["summary"]
-            if metadata_dictionary["series"]:
-                mi.series = metadata_dictionary["series"]["seriesName"]
-                mi.series_index = metadata_dictionary["series"]["part"]
+            mi.authors = author
+            mi.pubdate = pub_date
+            mi.language = "English"
+            
+            if is_series == True:
+                mi.series = series_data[0]
+                mi.series_index = series_data[1]
             
             set_metadata(file, mi, ext)
         return path_to_ebook
