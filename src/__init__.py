@@ -99,6 +99,12 @@ def series_index(list_of_text):
         if text == "Series:":
             return index
 
+# in a list, loop from the end of the list to find the word Summary
+
+def summary_index(list_of_text):
+    for index, text in enumerate(list_of_text):
+        if text == "Summary:":
+            return index
 
 
 class AO3PdfTagger(FileTypePlugin):
